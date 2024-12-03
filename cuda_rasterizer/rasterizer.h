@@ -20,6 +20,15 @@ namespace CudaRasterizer
 	class Rasterizer
 	{
 	public:
+    	Rasterizer() : d_usageCounts(nullptr) {}
+
+		~Rasterizer()
+		{
+			if (d_usageCounts) {
+				cudaFree(d_usageCounts);
+				d_usageCounts = nullptr;
+			}
+		}
 
 		static void markVisible(
 			int P,
@@ -83,6 +92,11 @@ namespace CudaRasterizer
 			float* dL_drot,
 			bool debug);
 	};
+
+	private:
+
+    int* d_usageCounts;
+
 };
 
 #endif
