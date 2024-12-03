@@ -222,6 +222,10 @@ int CudaRasterizer::Rasterizer::forward(
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
 
+	int* d_usageCounts;
+	CHECK_CUDA(cudaMalloc(&d_usageCounts, sizeof(int) * P), debug);
+	CHECK_CUDA(cudaMemset(d_usageCounts, 0, sizeof(int) * P), debug);
+
 	size_t chunk_size = required<GeometryState>(P);
 	char* chunkptr = geometryBuffer(chunk_size);
 	GeometryState geomState = GeometryState::fromChunk(chunkptr, P);
@@ -270,7 +274,7 @@ int CudaRasterizer::Rasterizer::forward(
 		tile_grid,
 		geomState.tiles_touched,
 		prefiltered
-	), debug)
+	), debug);
 
 	// Compute prefix sum over full list of touched tile counts by Gaussians
 	// E.g., [2, 3, 0, 2, 1] -> [2, 5, 5, 7, 8]
@@ -330,7 +334,12 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.accum_alpha,
 		imgState.n_contrib,
 		background,
-		out_color), debug)
+		out_color,
+		d_usageCounts // Pass the usageCounts array
+	), debug);
+
+	this->d_usageCounts = d_usageCounts;
+
 
 	return num_rendered;
 }
@@ -338,48 +347,48 @@ int CudaRasterizer::Rasterizer::forward(
 // Produce necessary gradients for optimization, corresponding
 // to forward render pass
 void CudaRasterizer::Rasterizer::backward(
-	const int P, int D, int M, int R,
-	const float* background,
-	const int width, int height,
-	const float* means3D,
-	const float* shs,
-	const float* colors_precomp,
-	const float* scales,
-	const float scale_modifier,
-	const float* rotations,
-	const float* cov3D_precomp,
-	const float* viewmatrix,
-	const float* projmatrix,
-	const float* campos,
-	const float tan_fovx, float tan_fovy,
-	const int* radii,
-	char* geom_buffer,
-	char* binning_buffer,
-	char* img_buffer,
-	const float* dL_dpix,
-	float* dL_dmean2D,
-	float* dL_dconic,
-	float* dL_dopacity,
-	float* dL_dcolor,
-	float* dL_dmean3D,
-	float* dL_dcov3D,
-	float* dL_dsh,
-	float* dL_dscale,
-	float* dL_drot,
-	bool debug)
+    const int P, int D, int M, int R,
+    const float* background,
+    const int width, int height,
+    const float* means3D,
+    const float* shs,
+    const float* colors_precomp,
+    const float* scales,
+    const float scale_modifier,
+    const float* rotations,
+    const float* cov3D_precomp,
+    const float* viewmatrix,
+    const float* projmatrix,
+    const float* campos,
+    const float tan_fovx, float tan_fovy,
+    const int* radii,
+    char* geom_buffer,
+    char* binning_buffer,
+    char* img_buffer,
+    const float* dL_dpix,
+    float* dL_dmean2D,
+    float* dL_dconic,
+    float* dL_dopacity,
+    float* dL_dcolor,
+    float* dL_dmean3D,
+    float* dL_dcov3D,
+    float* dL_dsh,
+    float* dL_dscale,
+    float* dL_drot,
+    bool debug)
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
 	BinningState binningState = BinningState::fromChunk(binning_buffer, R);
 	ImageState imgState = ImageState::fromChunk(img_buffer, width * height);
-
+	
 	if (radii == nullptr)
 	{
-		radii = geomState.internal_radii;
+	radii = geomState.internal_radii;
 	}
-
+	
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
-
+	
 	const dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
 	const dim3 block(BLOCK_X, BLOCK_Y, 1);
 
@@ -403,7 +412,8 @@ void CudaRasterizer::Rasterizer::backward(
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
-		dL_dcolor), debug)
+		dL_dcolor
+		d_usageCounts), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
@@ -431,4 +441,5 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dsh,
 		(glm::vec3*)dL_dscale,
 		(glm::vec4*)dL_drot), debug)
+	CHECK_CUDA(cudaFree(d_usageCounts), debug);
 }
