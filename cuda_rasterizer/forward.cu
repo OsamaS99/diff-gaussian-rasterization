@@ -17,14 +17,15 @@ namespace cg = cooperative_groups;
 
 // Forward method for converting the input spherical harmonics
 // coefficients of each Gaussian to a simple RGB color.
-__device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, bool* clamped)
+__device__ __forceinline__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, bool* clamped)
 {
 	// The implementation is loosely based on code for 
 	// "Differentiable Point-Based Radiance Fields for 
 	// Efficient View Synthesis" by Zhang et al. (2022)
-	glm::vec3 pos = means[idx];
-	glm::vec3 dir = pos - campos;
-	dir = dir / glm::length(dir);
+    glm::vec3 pos = means[idx];
+    glm::vec3 dir_orig = pos - campos;
+    float inv_len = rsqrtf(dir_orig.x * dir_orig.x + dir_orig.y * dir_orig.y + dir_orig.z * dir_orig.z);
+    glm::vec3 dir = dir_orig * inv_len;
 
 	glm::vec3* sh = ((glm::vec3*)shs) + idx * max_coeffs;
 	glm::vec3 result = SH_C0 * sh[0];
@@ -71,7 +72,7 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 }
 
 // Forward version of 2D covariance matrix computation
-__device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y, float tan_fovx, float tan_fovy, const float* cov3D, const float* viewmatrix)
+__device__ __forceinline__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y, float tan_fovx, float tan_fovy, const float* cov3D, const float* viewmatrix)
 {
 	// The following models the steps outlined by equations 29
 	// and 31 in "EWA Splatting" (Zwicker et al., 2002). 
@@ -111,7 +112,7 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 // Forward method for converting scale and rotation properties of each
 // Gaussian to a 3D covariance matrix in world space. Also takes care
 // of quaternion normalization.
-__device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 rot, float* cov3D)
+__device__ __forceinline__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 rot, float* cov3D)
 {
 	// Create scaling matrix
 	glm::mat3 S = glm::mat3(1.0f);
@@ -355,7 +356,7 @@ renderCUDA(
 			// Splatting" by Zwicker et al., 2001)
 			float2 xy = collected_xy[j];
 			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
-			float4 con_o = collected_conic_opacity[j];
+            float4 con_o = collected_conic_opacity[j];
 			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
 			if (power > 0.0f)
 				continue;
@@ -385,8 +386,10 @@ renderCUDA(
 
             // Eq. (3) from 3D Gaussian splatting paper.
             // CHANGED: identical accumulation but with possibly negative alpha to subtract color.
-			for (int ch = 0; ch < CHANNELS; ch++)
-				C[ch] += collected_colors[ch * BLOCK_SIZE + j] * alpha * T;
+            #pragma unroll
+            #pragma unroll
+            for (int ch = 0; ch < CHANNELS; ch++)
+                C[ch] += collected_colors[ch * BLOCK_SIZE + j] * alpha * T;
 
 			if(out_depth)
 				expected_depth += collected_depths[j] * alpha * T;
@@ -428,7 +431,10 @@ void FORWARD::render(
 	float* depths,
 	float* out_depth)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
+    // prefer L1 cache for this kernel (read-mostly data)
+    cudaFuncSetCacheConfig(renderCUDA<NUM_CHANNELS>, cudaFuncCachePreferL1);
+    cudaFuncSetAttribute(renderCUDA<NUM_CHANNELS>, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
+    renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
 		W, H,

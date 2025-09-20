@@ -20,7 +20,7 @@ __device__ __forceinline__ float sq(float x) { return x * x; }
 
 // Backward pass for conversion of spherical harmonics to RGB for
 // each Gaussian.
-__device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, const bool* clamped, const glm::vec3* dL_dcolor, glm::vec3* dL_dmeans, glm::vec3* dL_dshs)
+__device__ __forceinline__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, const bool* clamped, const glm::vec3* dL_dcolor, glm::vec3* dL_dmeans, glm::vec3* dL_dshs)
 {
 	// Compute intermediate values, as it is done during forward
 	glm::vec3 pos = means[idx];
@@ -577,7 +577,8 @@ renderCUDA(
 			// pair).
 			float dL_dalpha = 0.0f;
 			const int global_id = collected_id[j];
-			for (int ch = 0; ch < C; ch++)
+            #pragma unroll
+            for (int ch = 0; ch < C; ch++)
 			{
 				const float c = collected_colors[ch * BLOCK_SIZE + j];
 				// Update last color (to be used in the next iteration)
@@ -730,6 +731,8 @@ void BACKWARD::render(
 	float* dL_dcolors,
 	float* dL_dinvdepths)
 {
+    cudaFuncSetCacheConfig(renderCUDA<NUM_CHANNELS>, cudaFuncCachePreferL1);
+    cudaFuncSetAttribute(renderCUDA<NUM_CHANNELS>, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
 		point_list,
