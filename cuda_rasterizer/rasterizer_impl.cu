@@ -68,14 +68,14 @@ __global__ void checkFrustum(int P,
 // Generates one key/value pair for all Gaussian / tile overlaps. 
 // Run once per Gaussian (1:N mapping).
 __global__ void duplicateWithKeys(
-	int P,
-	const float2* points_xy,
-	const float* depths,
-	const uint32_t* offsets,
-	uint64_t* gaussian_keys_unsorted,
-	uint32_t* gaussian_values_unsorted,
-	int* radii,
-	dim3 grid)
+    int P,
+    const float2* __restrict__ points_xy,
+    const float* __restrict__ depths,
+    const uint32_t* __restrict__ offsets,
+    uint64_t* __restrict__ gaussian_keys_unsorted,
+    uint32_t* __restrict__ gaussian_values_unsorted,
+    int* __restrict__ radii,
+    dim3 grid)
 {
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P)
@@ -99,9 +99,9 @@ __global__ void duplicateWithKeys(
 		{
 			for (int x = rect_min.x; x < rect_max.x; x++)
 			{
-				uint64_t key = y * grid.x + x;
-				key <<= 32;
-				key |= *((uint32_t*)&depths[idx]);
+                uint64_t key = static_cast<uint64_t>(y) * grid.x + static_cast<uint64_t>(x);
+                key <<= 32;
+                key |= static_cast<uint64_t>(__float_as_uint(depths[idx]));
 				gaussian_keys_unsorted[off] = key;
 				gaussian_values_unsorted[off] = idx;
 				off++;

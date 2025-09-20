@@ -220,7 +220,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float h_convolution_scaling = 1.0f;
 
 	if(antialiasing)
-		h_convolution_scaling = sqrt(max(0.000025f, det_cov / det_cov_plus_h_cov)); // max for numerical stability
+		h_convolution_scaling = sqrtf(max(0.000025f, det_cov / det_cov_plus_h_cov)); // max for numerical stability
 
 	// Invert covariance (EWA algorithm)
 	const float det = det_cov_plus_h_cov;
@@ -235,9 +235,9 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// of screen-space tiles that this Gaussian overlaps with. Quit if
 	// rectangle covers 0 tiles. 
 	float mid = 0.5f * (cov.x + cov.z);
-	float lambda1 = mid + sqrt(max(0.1f, mid * mid - det));
-	float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
-	float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
+	float lambda1 = mid + sqrtf(max(0.1f, mid * mid - det));
+	float lambda2 = mid - sqrtf(max(0.1f, mid * mid - det));
+	float my_radius = ceilf(3.f * sqrtf(max(lambda1, lambda2)));
 	float2 point_image = { ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H) };
 	uint2 rect_min, rect_max;
 	getRect(point_image, my_radius, rect_min, rect_max, grid);
@@ -310,6 +310,8 @@ renderCUDA(
 	__shared__ int collected_id[BLOCK_SIZE];
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
+	__shared__ float collected_colors[CHANNELS * BLOCK_SIZE];
+	__shared__ float collected_depths[BLOCK_SIZE];
 
 	// Initialize helper variables
 	float T = 1.0f;
@@ -335,6 +337,11 @@ renderCUDA(
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			#pragma unroll
+			for (int ch = 0; ch < CHANNELS; ++ch)
+				collected_colors[ch * BLOCK_SIZE + block.thread_rank()] = features[coll_id * CHANNELS + ch];
+			if (out_depth)
+				collected_depths[block.thread_rank()] = depths[coll_id];
 		}
 		block.sync();
 
@@ -360,12 +367,12 @@ renderCUDA(
             //
             // CHANGED: allow negative opacity (scooping). The transmittance update remains
             // T *= (1 - alpha). When alpha < 0, this increases T (amplifies transmittance).
-            float alpha = con_o.w * exp(power);
+			float alpha = con_o.w * __expf(power);
             // Symmetric clamp to allow signed alpha in [-0.99, 0.99]
             if (alpha >= 0)
                 alpha = min(0.99f, alpha);
             else
-                alpha = max(-0.99f, alpha);
+				alpha = max(-0.99f, alpha);
             // Skip negligible contributions based on magnitude
             if (alpha > -1.0f / 255.0f && alpha < 1.0f / 255.0f)
                 continue;
@@ -378,11 +385,11 @@ renderCUDA(
 
             // Eq. (3) from 3D Gaussian splatting paper.
             // CHANGED: identical accumulation but with possibly negative alpha to subtract color.
-            for (int ch = 0; ch < CHANNELS; ch++)
-                C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			for (int ch = 0; ch < CHANNELS; ch++)
+				C[ch] += collected_colors[ch * BLOCK_SIZE + j] * alpha * T;
 
 			if(out_depth)
-			expected_depth += depths[collected_id[j]] * alpha * T;
+				expected_depth += collected_depths[j] * alpha * T;
 
 			T = test_T;
 
@@ -402,7 +409,7 @@ renderCUDA(
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 
 		if (out_depth)
-		out_depth[pix_id] = expected_depth;
+			out_depth[pix_id] = expected_depth;
 	}
 }
 
