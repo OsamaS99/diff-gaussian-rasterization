@@ -216,7 +216,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	float* out_color,
-	float* depth,
+	float* out_depth,
 	bool antialiasing,
 	int* radii,
 	bool debug)
@@ -335,7 +335,7 @@ int CudaRasterizer::Rasterizer::forward(
 		background,
 		out_color,
 		geomState.depths,
-		depth), debug)
+		out_depth), debug)
 
 	return num_rendered;
 }
@@ -363,12 +363,12 @@ void CudaRasterizer::Rasterizer::backward(
 	char* binning_buffer,
 	char* img_buffer,
 	const float* dL_dpix,
-	const float* dL_invdepths,
+	const float* dL_ddepth,
 	float* dL_dmean2D,
 	float* dL_dconic,
 	float* dL_dopacity,
 	float* dL_dcolor,
-	float* dL_dinvdepth,
+	float* dL_ddepths,
 	float* dL_dmean3D,
 	float* dL_dcov3D,
 	float* dL_dsh,
@@ -410,12 +410,12 @@ void CudaRasterizer::Rasterizer::backward(
 		imgState.accum_alpha,
 		imgState.n_contrib,
 		dL_dpix,
-		dL_invdepths,
+		dL_ddepth,
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
 		dL_dcolor,
-		dL_dinvdepth), debug);
+		dL_ddepths), debug);
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
@@ -438,7 +438,7 @@ void CudaRasterizer::Rasterizer::backward(
 		(glm::vec3*)campos,
 		(float3*)dL_dmean2D,
 		dL_dconic,
-		dL_dinvdepth,
+		dL_ddepths,
 		dL_dopacity,
 		(glm::vec3*)dL_dmean3D,
 		dL_dcolor,

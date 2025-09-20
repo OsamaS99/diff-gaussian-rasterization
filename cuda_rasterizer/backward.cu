@@ -463,13 +463,12 @@ renderCUDA(
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
-	const float* __restrict__ dL_invdepths,
+	const float* __restrict__ dL_ddepths_out,
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_dinvdepths
-)
+	float* __restrict__ dL_ddepths)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -513,8 +512,8 @@ renderCUDA(
 	{
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
-		if(dL_invdepths)
-		dL_invdepth = dL_invdepths[pix_id];
+		if(dL_ddepths_out)
+		dL_invdepth = dL_ddepths_out[pix_id];
 	}
 
 	float last_alpha = 0;
@@ -543,7 +542,7 @@ renderCUDA(
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 
-			if(dL_invdepths)
+			if(dL_ddepths_out)
 			collected_depths[block.thread_rank()] = depths[coll_id];
 		}
 		block.sync();
@@ -566,7 +565,7 @@ renderCUDA(
 				continue;
 
 			const float G = exp(power);
-			const float alpha = min(0.99f, con_o.w * G);
+			float alpha = min(0.99f, con_o.w * G);
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
@@ -594,13 +593,13 @@ renderCUDA(
 			}
 			// Propagate gradients from inverse depth to alphaas and
 			// per Gaussian inverse depths
-			if (dL_dinvdepths)
+			if (dL_ddepths_out)
 			{
 			const float invd = 1.f / collected_depths[j];
 			accum_invdepth_rec = last_alpha * last_invdepth + (1.f - last_alpha) * accum_invdepth_rec;
 			last_invdepth = invd;
 			dL_dalpha += (invd - accum_invdepth_rec) * dL_invdepth;
-			atomicAdd(&(dL_dinvdepths[global_id]), dchannel_dcolor * dL_invdepth);
+			atomicAdd(&(dL_ddepths[global_id]), dchannel_dcolor * dL_invdepth);
 			}
 
 			dL_dalpha *= T;
@@ -654,10 +653,10 @@ void BACKWARD::preprocess(
 	const float tan_fovx, float tan_fovy,
 	const glm::vec3* campos,
 	const float3* dL_dmean2D,
-	const float* dL_dconic,
-	const float* dL_dinvdepth,
+	const float* dL_dconics,
+	const float* dL_ddepth,
 	float* dL_dopacity,
-	glm::vec3* dL_dmean3D,
+	glm::vec3* dL_dmeans,
 	float* dL_dcolor,
 	float* dL_dcov3D,
 	float* dL_dsh,
@@ -680,10 +679,10 @@ void BACKWARD::preprocess(
 		tan_fovy,
 		viewmatrix,
 		opacities,
-		dL_dconic,
+		dL_dconics,
 		dL_dopacity,
-		dL_dinvdepth,
-		(float3*)dL_dmean3D,
+		dL_ddepth,
+		(float3*)dL_dmeans,
 		dL_dcov3D,
 		antialiasing);
 
@@ -702,7 +701,7 @@ void BACKWARD::preprocess(
 		projmatrix,
 		campos,
 		(float3*)dL_dmean2D,
-		(glm::vec3*)dL_dmean3D,
+		(glm::vec3*)dL_dmeans,
 		dL_dcolor,
 		dL_dcov3D,
 		dL_dsh,
@@ -724,7 +723,7 @@ void BACKWARD::render(
 	const float* final_Ts,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
-	const float* dL_invdepths,
+	const float* dL_ddepths,
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
@@ -743,7 +742,7 @@ void BACKWARD::render(
 		final_Ts,
 		n_contrib,
 		dL_dpixels,
-		dL_invdepths,
+		dL_ddepths,
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
